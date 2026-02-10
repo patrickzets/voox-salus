@@ -28,6 +28,7 @@ class AppSalus(ctk.CTk):
         self.geometry(f"+{x}+{y}")
         
         self.stop_event = threading.Event()
+        self.event_queue = queue.Queue()
         
         # Variáveis de Controle
         self.pasta_origem = ""
@@ -36,6 +37,7 @@ class AppSalus(ctk.CTk):
         self.copiar_arquivos = ctk.BooleanVar(value=False)
         
         self.setup_ui()
+        self.after(150, self.processar_eventos)
 
     def setup_ui(self):
         # --- CABEÇALHO ---
@@ -189,10 +191,48 @@ class AppSalus(ctk.CTk):
         btn.pack(side="right")
 
     def log(self, mensagem):
-        if threading.current_thread() is threading.main_thread():
+        self.event_queue.put({"tipo": "log", "mensagem": mensagem})
+
+    def enfileirar_progresso(self, progresso, texto):
+        self.event_queue.put({"tipo": "progresso", "progresso": progresso, "texto": texto})
+
+    def processar_eventos(self):
+        logs = []
+        progresso = None
+        texto_progresso = None
+        finalizar = None
+        reset = False
+
+        while True:
+            try:
+                evento = self.event_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            tipo = evento.get("tipo")
+            if tipo == "log":
+                logs.append(evento.get("mensagem", ""))
+            elif tipo == "progresso":
+                progresso = evento.get("progresso")
+                texto_progresso = evento.get("texto")
+            elif tipo == "finalizar":
+                finalizar = (evento.get("total", 0), evento.get("interrompido", False))
+            elif tipo == "reset":
+                reset = True
+
+        for mensagem in logs:
             self._append_log(mensagem)
-        else:
-            self.after(0, self._append_log, mensagem)
+
+        if progresso is not None:
+            self._atualizar_progresso(progresso, texto_progresso)
+
+        if finalizar:
+            total, interrompido = finalizar
+            self._finalizar_lote(total, interrompido)
+        elif reset:
+            self.reset_botoes()
+
+        self.after(150, self.processar_eventos)
 
     def _append_log(self, mensagem):
         self.txt_log.insert("end", f"> {mensagem}\n")
@@ -264,7 +304,7 @@ class AppSalus(ctk.CTk):
         
         if total == 0:
             self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
-            self.after(0, self.reset_botoes)
+            self.event_queue.put({"tipo": "reset"})
             return
 
         self.log(f"Total de arquivos na fila: {total}")
@@ -276,9 +316,7 @@ class AppSalus(ctk.CTk):
             
             # Atualiza Progresso Visual
             progresso = index / total
-            self.after(
-                0,
-                self._atualizar_progresso,
+            self.enfileirar_progresso(
                 progresso,
                 f"Processando arquivo {index} de {total}: {arquivo}",
             )

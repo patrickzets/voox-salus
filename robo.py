@@ -18,6 +18,10 @@ class SalusRobot:
         else:
             self.caminho_mapa = os.path.join("imgs", "mapa.png")
 
+        self.mapa_img = None
+        self._posicoes_cache = {}
+        self._carregar_mapa()
+
         self.cores = {
             "passo_01":        ([0, 0, 255], "click"),
             "passo_02":        ([39, 127, 255], "click"),
@@ -39,18 +43,33 @@ class SalusRobot:
             "passo_07", "passo_08", "passo_09", "passo_11", "passo_12"
         ]
 
-    def encontrar_cor(self, cor_bgr):
+    def _carregar_mapa(self):
         if not os.path.exists(self.caminho_mapa):
             self.log("Erro: mapa.png não encontrado")
+            self.mapa_img = None
+            return
+
+        self.mapa_img = cv2.imread(self.caminho_mapa)
+        if self.mapa_img is None:
+            self.log("Erro: falha ao carregar mapa.png")
+
+    def encontrar_cor(self, cor_bgr):
+        if self.mapa_img is None:
             return None
 
-        img = cv2.imread(self.caminho_mapa)
-        cor_np = np.array(cor_bgr, dtype="uint8")
-        mask = cv2.inRange(img, cor_np, cor_np)
+        cor_key = tuple(cor_bgr)
+        if cor_key in self._posicoes_cache:
+            return self._posicoes_cache[cor_key]
+
+        cor_np = np.array(cor_key, dtype="uint8")
+        mask = cv2.inRange(self.mapa_img, cor_np, cor_np)
         pontos = cv2.findNonZero(mask)
 
         if pontos is not None:
-            return pontos[0][0]
+            pos = pontos[0][0]
+            self._posicoes_cache[cor_key] = pos
+            return pos
+        self._posicoes_cache[cor_key] = None
         return None
 
     def executar_acao(self, x, y, tipo, valor=None):
@@ -90,7 +109,8 @@ class SalusRobot:
                 salus.activate()
                 salus.maximize()
                 time.sleep(1.0)
-        except: pass
+        except Exception:
+            pass
 
         for nome_passo in self.sequencia:
             if self.stop_event.is_set(): return False, "Parada manual"

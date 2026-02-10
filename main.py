@@ -1,11 +1,3 @@
-import customtkinter as ctk
-import threading
-import os
-import shutil  # Biblioteca para mover arquivos
-from tkinter import filedialog, messagebox
-from robo import SalusRobot
-
-# --- CONFIGURAÇÃO DE TEMA PROFISSIONAL (Light Mode Clean) ---
 ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
 
@@ -52,17 +44,16 @@ class AppSalus(ctk.CTk):
             text="v2.0 Enterprise", 
             font=("Arial", 12), 
             text_color="gray"
-        ).pack(side="left", padx=10, pady=(10,0))
+).pack(side="left", padx=10, pady=(10,0))
 
-        # --- CARD 1: CONFIGURAÇÕES (Onde escolhe as pastas) ---
-        self.card_config = ctk.CTkFrame(self, fg_color="white", corner_radius=15, border_width=1, border_color="#E5E5E5")
-        self.card_config.pack(fill="x", padx=30, pady=10)
+# --- CARD 1: CONFIGURAÇÕES (Onde escolhe as pastas) ---
+self.card_config = ctk.CTkFrame(self, fg_color="white", corner_radius=15, border_width=1, border_color="#E5E5E5")
+self.card_config.pack(fill="x", padx=30, pady=10)
 
-        # Título do Card
-        ctk.CTkLabel(self.card_config, text="CONFIGURAÇÃO DE FLUXO", font=("Arial", 12, "bold"), text_color="#3498DB").pack(anchor="w", padx=20, pady=(15, 5))
+ctk.CTkLabel(self.card_config, text="CONFIGURAÇÃO DE FLUXO", font=("Arial", 12, "bold"), text_color="#3498DB").pack(anchor="w", padx=20, pady=(15, 5))
 
-        # 1. Seleção de Sistema (Radio Buttons)
-        self.frame_radios = ctk.CTkFrame(self.card_config, fg_color="transparent")
+# 1. Seleção de Sistema (Radio Buttons)
+self.frame_radios = ctk.CTkFrame(self.card_config, fg_color="transparent")
         self.frame_radios.pack(fill="x", padx=20, pady=5)
         
         ctk.CTkLabel(self.frame_radios, text="Sistema Alvo:", font=("Arial", 12)).pack(side="left", padx=(0, 10))
@@ -123,135 +114,8 @@ class AppSalus(ctk.CTk):
             font=("Consolas", 11), 
             fg_color="#F8F9FA", 
             text_color="#2C3E50",
-            corner_radius=6,
-            border_width=1,
-            border_color="#E0E0E0"
         )
-        self.txt_log.pack(fill="both", expand=True, padx=20, pady=10)
-
-
-        # --- RODAPÉ COM BOTOES ---
-        self.frame_footer = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_footer.pack(fill="x", padx=30, pady=20)
-
-        self.btn_iniciar = ctk.CTkButton(
-            self.frame_footer, 
-            text="INICIAR PROCESSAMENTO", 
-            command=self.iniciar_thread,
-            fg_color="#27AE60", # Verde Profissional
-            hover_color="#219150",
-            font=("Arial", 14, "bold"),
-            height=50
-        )
-        self.btn_iniciar.pack(fill="x")
-
-        self.btn_parar = ctk.CTkButton(
-            self.frame_footer, 
-            text="PARAR OPERAÇÃO", 
-            command=self.parar_processo,
-            fg_color="transparent", 
-            text_color="#C0392B",
-            hover_color="#FDEDEC",
-            border_width=1,
-            border_color="#C0392B",
-            height=30,
-            state="disabled"
-        )
-        self.btn_parar.pack(pady=10)
-
-    def criar_seletor_pasta(self, parent, label_text, tipo):
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="x", padx=20, pady=5)
-        
-        ctk.CTkLabel(frame, text=label_text, font=("Arial", 11, "bold"), text_color="gray").pack(anchor="w")
-        
-        sub_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        sub_frame.pack(fill="x")
-        
-        entry = ctk.CTkEntry(sub_frame, placeholder_text="Selecione a pasta...", height=35, border_color="#BDC3C7")
-        entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        entry.configure(state="disabled") # Apenas leitura
-        
-        if tipo == "origem": self.entry_origem = entry
-        else: self.entry_destino = entry
-
-        btn = ctk.CTkButton(
-            sub_frame, 
-            text="📂 Escolher", 
-            width=80, 
-            height=35,
-            fg_color="#34495E", 
-            hover_color="#2C3E50",
-            command=lambda: self.selecionar_pasta(tipo)
-        )
-        btn.pack(side="right")
-
-    def log(self, mensagem):
-        if threading.current_thread() is threading.main_thread():
-            self._append_log(mensagem)
-        else:
-            self.after(0, self._append_log, mensagem)
-
-    def _append_log(self, mensagem):
-        self.txt_log.insert("end", f"> {mensagem}\n")
-        self.txt_log.see("end")
-
-    def selecionar_pasta(self, tipo):
-        pasta = filedialog.askdirectory()
-        if pasta:
-            if tipo == "origem":
-                self.pasta_origem = pasta
-                self.entry_origem.configure(state="normal")
-                self.entry_origem.delete(0, "end")
-                self.entry_origem.insert(0, pasta)
-                self.entry_origem.configure(state="disabled")
-            else:
-                self.pasta_destino = pasta
-                self.entry_destino.configure(state="normal")
-                self.entry_destino.delete(0, "end")
-                self.entry_destino.insert(0, pasta)
-                self.entry_destino.configure(state="disabled")
-
-    def iniciar_thread(self):
-        # Validações
-        if not self.pasta_origem or not self.pasta_destino:
-            messagebox.showwarning("Configuração Incompleta", "Por favor, selecione as pastas de Origem e Destino.")
-            return
-        
-        if self.pasta_origem == self.pasta_destino:
-            messagebox.showerror("Erro", "A pasta de origem e destino não podem ser a mesma.")
-            return
-
-        self.stop_event.clear()
-        self.btn_iniciar.configure(state="disabled", text="PROCESSANDO LOTE...")
-        self.btn_parar.configure(state="normal")
-        
-        threading.Thread(target=self.rodar_lote, daemon=True).start()
-
-    def parar_processo(self):
-        self.stop_event.set()
-        self.log("🛑 Solicitando parada segura...")
-
-    def rodar_lote(self):
-        bot = SalusRobot(self.log, self.stop_event)
-        sistema = self.sistema_selecionado.get()
-        
-        self.log(f"--- INICIANDO LOTE ({sistema}) ---")
-        self.log(f"Origem: {self.pasta_origem}")
-        self.log(f"Destino: {self.pasta_destino}")
-
-        # Lista apenas arquivos PDF
-        arquivos = sorted(
-            entry.name
-            for entry in os.scandir(self.pasta_origem)
-            if entry.is_file() and entry.name.lower().endswith(".pdf")
-        )
-        total = len(arquivos)
-        
-        if total == 0:
-            self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
-            self.after(0, self.reset_botoes)
-            return
+        self.txt_log.pack(fill="both", expand=True, padx=20, pady=(5, 10))
 
         self.log(f"Total de arquivos na fila: {total}")
         
@@ -275,15 +139,18 @@ class AppSalus(ctk.CTk):
             sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
             
             if sucesso:
+                self.log(f"✅ {arquivo}: Sucesso! Movendo para concluídos...")
                 acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
                 self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
                 try:
+                    shutil.move(caminho_completo, os.path.join(self.pasta_destino, arquivo))
                     destino = os.path.join(self.pasta_destino, arquivo)
                     if self.copiar_arquivos.get():
                         shutil.copy2(caminho_completo, destino)
                     else:
                         shutil.move(caminho_completo, destino)
                 except Exception as e:
+                    self.log(f"⚠️ Erro ao mover arquivo: {e}")
                     self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
             else:
                 self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
@@ -310,7 +177,3 @@ class AppSalus(ctk.CTk):
     def reset_botoes(self):
         self.btn_iniciar.configure(state="normal", text="INICIAR PROCESSAMENTO")
         self.btn_parar.configure(state="disabled")
-
-if __name__ == "__main__":
-    app = AppSalus()
-    app.mainloop()

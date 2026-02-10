@@ -242,6 +242,16 @@ class AppSalus(ctk.CTk):
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
 
+        if bot.mapa_img is None:
+            self.log("Erro: mapa.png não foi carregado. Verifique o arquivo antes de iniciar o lote.")
+            self.after(0, self.reset_botoes)
+            return
+
+        if not bot.janela_disponivel():
+            self.log("Erro: janela alvo 'Pedido de Exames (Remoto)' não encontrada.")
+            self.after(0, self.reset_botoes)
+            return
+
         # Lista apenas arquivos PDF
         arquivos = sorted(
             entry.name
@@ -249,6 +259,8 @@ class AppSalus(ctk.CTk):
             if entry.is_file() and entry.name.lower().endswith(".pdf")
         )
         total = len(arquivos)
+        sucessos = []
+        falhas = 0
         
         if total == 0:
             self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
@@ -290,10 +302,20 @@ class AppSalus(ctk.CTk):
                 erro_inesperado = msg
             
             if sucesso:
-                acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
-                self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
+                self.log(f"✅ {arquivo}: Sucesso! Marcado para finalizar ao final do lote.")
+                sucessos.append(arquivo)
+            else:
+                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
+                falhas += 1
+
+        erros_movimentacao = 0
+        if sucessos:
+            acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
+            self.log(f"{acao_texto} arquivos finalizados em lote...")
+            for arquivo in sucessos:
+                caminho_completo = os.path.join(self.pasta_origem, arquivo)
+                destino = os.path.join(self.pasta_destino, arquivo)
                 try:
-                    destino = os.path.join(self.pasta_destino, arquivo)
                     if self.copiar_arquivos.get():
                         shutil.copy2(caminho_completo, destino)
                     else:

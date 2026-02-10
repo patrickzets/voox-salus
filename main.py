@@ -272,7 +272,11 @@ class AppSalus(ctk.CTk):
             id_paciente = "".join(filter(str.isdigit, arquivo))
             
             # --- CHAMA O ROBÔ ---
-            sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
+            try:
+                sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
+            except Exception as exc:
+                sucesso, msg = False, f"Erro inesperado: {exc}"
+                erro_inesperado = msg
             
             if sucesso:
                 acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"

@@ -187,16 +187,12 @@ class AppSalus(ctk.CTk):
         btn.pack(side="right")
 
     def log(self, mensagem):
-        if not self.winfo_exists():
-            return
         if threading.current_thread() is threading.main_thread():
             self._append_log(mensagem)
         else:
             self.after(0, self._append_log, mensagem)
 
     def _append_log(self, mensagem):
-        if not self.winfo_exists():
-            return
         self.txt_log.insert("end", f"> {mensagem}\n")
         self.txt_log.see("end")
 
@@ -244,17 +240,12 @@ class AppSalus(ctk.CTk):
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
 
-        try:
-            # Lista apenas arquivos PDF
-            arquivos = sorted(
-                entry.name
-                for entry in os.scandir(self.pasta_origem)
-                if entry.is_file() and entry.name.lower().endswith(".pdf")
-            )
-        except Exception as exc:
-            self.log(f"Erro ao listar arquivos: {exc}")
-            self.after(0, self._finalizar_lote, 0, True, f"{exc}")
-            return
+        # Lista apenas arquivos PDF
+        arquivos = sorted(
+            entry.name
+            for entry in os.scandir(self.pasta_origem)
+            if entry.is_file() and entry.name.lower().endswith(".pdf")
+        )
         total = len(arquivos)
         
         if total == 0:
@@ -264,7 +255,6 @@ class AppSalus(ctk.CTk):
 
         self.log(f"Total de arquivos na fila: {total}")
         
-        erro_inesperado = None
         for index, arquivo in enumerate(arquivos, start=1):
             if self.stop_event.is_set():
                 break
@@ -302,21 +292,19 @@ class AppSalus(ctk.CTk):
             else:
                 self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
 
-        interrompido = self.stop_event.is_set() or erro_inesperado is not None
-        self.after(0, self._finalizar_lote, total, interrompido, erro_inesperado)
+        interrompido = self.stop_event.is_set()
+        self.after(0, self._finalizar_lote, total, interrompido)
 
     def _atualizar_progresso(self, progresso, texto):
         self.progress.set(progresso)
         self.lbl_status_progresso.configure(text=texto)
 
-    def _finalizar_lote(self, total, interrompido, erro_inesperado=None):
+    def _finalizar_lote(self, total, interrompido):
         self.progress.set(1)
         status_texto = "Operação interrompida." if interrompido else "Lote finalizado."
         self.lbl_status_progresso.configure(text=status_texto)
         self.log("--- FIM DO PROCESSAMENTO ---")
-        if erro_inesperado:
-            messagebox.showerror("Relatório", f"Processamento interrompido por erro.\n{erro_inesperado}")
-        elif interrompido:
+        if interrompido:
             messagebox.showwarning("Relatório", "Processamento interrompido pelo usuário.")
         else:
             messagebox.showinfo("Relatório", f"Processamento finalizado.\nTotal processado: {total}")

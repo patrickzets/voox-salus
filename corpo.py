@@ -1,68 +1,103 @@
 import time
-from interface import VisaoComputacional
-
-class Paciente:
-    def __init__(self, id_paciente, status, coordenada_y):
-        self.id = id_paciente
-        self.status = status.upper()
-        self.y = coordenada_y
+import os
+import json
+import pyautogui
+import pyperclip
+import sys
 
 class ControladorSalus:
-    def __init__(self, tesseract_path):
-        self.visao = VisaoComputacional(tesseract_path)
+    def __init__(self, tesseract_path=None):
+        self.mapa = {}
+        self.carregar_mapa()
         
-        # Configurações de Geometria (Ajuste conforme sua tela)
-        self.offset_y_dados = 25  # Pixels abaixo do cabeçalho para começar a ler
-        self.altura_linha = 20    # Altura aproximada de cada linha do grid
-        self.largura_coluna_id = 80
-        self.largura_coluna_status = 150
-        self.distancia_status_x = 300 # Distância horizontal aprox entre ID e Status
+        # A sequência principal NÃO inclui o alerta, ele é um "extra"
+        self.sequencia = [
+            "01_inicio", "02_limpar", "03_aba", "04_digitar", "05_lupa",
+            "06_selecionar", # AQUI ENTRA A GUARDA DEPOIS DISSO
+            "08_setinha", "09_pedidos", "10_carregar", 
+            "11_anexar", "12_fechar"
+        ]
 
-    def escanear_grid(self, img_cabecalho_id):
-        print("Buscando âncora visual...")
-        localizacao = self.visao.localizar_na_tela(img_cabecalho_id)
+    def carregar_mapa(self):
+        try:
+            with open("config_mapa.json", "r") as f:
+                self.mapa = json.load(f)
+            print("Mapa carregado.")
+        except:
+            print("ERRO: Rode o calibrador.py!")
+
+    def processar_por_arquivos(self, pasta, callback_log, modo_biovida):
+        if not os.path.exists(pasta): return
+        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith('.pdf')]
         
-        if not localizacao:
-            print("Cabeçalho 'Id paciente' não encontrado.")
-            return []
-
-        x_ancora, y_ancora, w_ancora, h_ancora = localizacao
-        
-        # Define as regiões de leitura baseadas na âncora encontrada
-        y_inicio = y_ancora + h_ancora + 5
-        altura_scan = 400 # Ler 400px para baixo (várias linhas)
-
-        regiao_ids = (x_ancora, y_inicio, self.largura_coluna_id, altura_scan)
-        
-        # A região de status é deslocada para a direita (X + distancia)
-        regiao_status = (x_ancora + self.distancia_status_x, y_inicio, self.largura_coluna_status, altura_scan)
-
-        print("Lendo dados da tela (OCR)...")
-        lista_ids = self.visao.ler_texto_da_regiao(regiao_ids, config_tesseract='--psm 6 -c tessedit_char_whitelist=0123456789')
-        lista_status = self.visao.ler_texto_da_regiao(regiao_status, config_tesseract='--psm 6 --oem 3 -l por')
-
-        return self._correlacionar_dados(lista_ids, lista_status, x_ancora, y_inicio)
-
-    def _correlacionar_dados(self, ids, status, x_base, y_base):
-        """
-        Junta as duas listas (IDs e Status) em objetos Paciente.
-        Assume alinhamento 1:1.
-        """
-        pacientes = []
-        qtd = min(len(ids), len(status))
-        
-        for i in range(qtd):
-            # Calcula onde clicar (centro aproximado da linha)
-            y_clique = y_base + (i * self.altura_linha) + (self.altura_linha // 2)
+        for arquivo in arquivos:
+            id_paciente = arquivo.replace(".pdf", "")
+            if modo_biovida and "-" in id_paciente:
+                id_paciente = id_paciente.split("-")[-1]
             
-            p = Paciente(ids[i], status[i], y_clique)
-            pacientes.append(p)
+            caminho = os.path.join(pasta, arquivo)
+            callback_log(f"Iniciando ID: {id_paciente}...", "info")
             
-        return pacientes
+            res = self.executar_sequencia_completa(id_paciente, caminho, callback_log)
+            yield (id_paciente, res)
+            time.sleep(1)
 
-    def executar_acao(self, paciente):
-        print(f"Processando ID {paciente.id}...")
-        # Exemplo de ação: Duplo clique na linha do paciente
-        # O X é fixo na coluna de ID, o Y é calculado
-        self.visao.duplo_clique(paciente.y, paciente.y) 
-        time.sleep(1) # Espera janela abrir
+    def executar_sequencia_completa(self, id_val, caminho_arquivo, log_func):
+        for passo in self.sequencia:
+            if passo not in self.mapa:
+                log_func(f"Passo {passo} ausente no mapa!", "erro")
+                return f"ERRO CONFIG {passo}"
+
+            dados = self.mapa[passo]
+            x, y = dados['x'], dados['y']
+
+            # --- AÇÕES ESPECÍFICAS ---
+
+            if passo == "04_digitar":
+                pyautogui.click(x, y); time.sleep(0.3)
+                pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')
+                pyautogui.write(id_val); time.sleep(0.3)
+
+            elif passo == "05_lupa":
+                pyautogui.click(x, y)
+                time.sleep(3.0) # Espera busca
+
+            elif passo == "06_selecionar":
+                 # Duplo clique para abrir
+                 pyautogui.doubleClick(x, y)
+                 log_func("Paciente aberto. Verificando alertas...", "info")
+                 time.sleep(2.5) # Espera a janela (paciente OU alerta) aparecer
+                 
+                 # === AQUI ESTÁ A GUARDA (VERIFICAÇÃO DO ALERTA) ===
+                 # Tenta clicar no botão "Sair" do alerta (Rosa)
+                 if self.tentar_clicar_opcional("00_alerta_sair"):
+                     log_func("⚠️ Alerta detectado e fechado.", "aviso")
+                     time.sleep(1.5) # Espera o alerta sumir e a tela de trás focar
+                 # Se não achar o alerta, ele simplesmente segue para o próximo passo (08_setinha)
+                 # ==================================================
+
+            elif passo == "11_anexar":
+                pyautogui.click(x, y); time.sleep(1.5)
+                pyperclip.copy(caminho_arquivo)
+                pyautogui.hotkey('ctrl', 'v'); time.sleep(0.5)
+                pyautogui.press('enter'); time.sleep(3.0)
+
+            else:
+                # Cliques normais (Inicio, Aba, Seta, Pedidos, etc)
+                pyautogui.click(x, y)
+                time.sleep(0.8)
+
+        return "SUCESSO"
+
+    def tentar_clicar_opcional(self, nome_passo):
+        """
+        Tenta clicar numa cor se ela existir no mapa.
+        Não gera erro se não existir. Retorna True se clicou.
+        """
+        if nome_passo in self.mapa:
+            x, y = self.mapa[nome_passo]['x'], self.mapa[nome_passo]['y']
+            # Move primeiro para garantir o foco, depois clica
+            pyautogui.moveTo(x, y) 
+            pyautogui.click()
+            return True
+        return False

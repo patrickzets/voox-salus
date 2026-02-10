@@ -129,3 +129,9 @@ class SalusRobot:
                 self.log(f"Aviso: Cor do passo {nome_passo} não encontrada")
         
         return True, "Sucesso"
+
+    def janela_disponivel(self, titulo="Pedido de Exames (Remoto)"):
+        try:
+            return bool(gw.getWindowsWithTitle(titulo))
+        except Exception:
+            return False

@@ -1,0 +1,7 @@
+Passo Arquivo Cor Esperada (BGR) O que conferir
+01 mapa.png [255, 0, 0] Verifique se a bolinha é Azul puro.
+02 mapa_2.png [255, 127, 39] Cor específica. Use o conta-gotas no Paint.
+03 mapa_3.png [255, 255, 0] Verifique se a bolinha é Ciano.
+04 mapa_2.png [0, 0, 255] Verifique se a bolinha é Vermelho puro.
+09 mapa_4.png [136, 0, 21] Cor Vinho/Escura.
+10 mapa_5.png [255, 174, 201] Cor Rosa Claro.

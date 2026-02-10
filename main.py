@@ -16,6 +16,7 @@ class AppSalus(ctk.CTk):
         # Configurações da Janela
         self.title("Voox Salus | Gerenciador de Automação")
         self.geometry("800x750")
+        self.configure(fg_color="#F4F6F8")
         
         # Centralizar
         screen_width = self.winfo_screenwidth()
@@ -30,6 +31,7 @@ class AppSalus(ctk.CTk):
         self.pasta_origem = ""
         self.pasta_destino = ""
         self.sistema_selecionado = ctk.StringVar(value="BIOCROMA") # Padrão
+        self.copiar_arquivos = ctk.BooleanVar(value=False)
         
         self.setup_ui()
 
@@ -82,6 +84,20 @@ class AppSalus(ctk.CTk):
         
         # 3. Pasta Destino
         self.criar_seletor_pasta(self.card_config, "Pasta de Finalizados (Destino):", "destino")
+
+        # 4. Opção de cópia
+        self.frame_opcoes = ctk.CTkFrame(self.card_config, fg_color="transparent")
+        self.frame_opcoes.pack(fill="x", padx=20, pady=(5, 10))
+        ctk.CTkCheckBox(
+            self.frame_opcoes,
+            text="Copiar arquivos em vez de mover",
+            variable=self.copiar_arquivos,
+            onvalue=True,
+            offvalue=False,
+            text_color="#2C3E50",
+            fg_color="#3498DB",
+            hover_color="#2980B9",
+        ).pack(anchor="w")
         
         # Espaçamento final do card
         ctk.CTkLabel(self.card_config, text="").pack(pady=5)
@@ -171,6 +187,16 @@ class AppSalus(ctk.CTk):
         btn.pack(side="right")
 
     def log(self, mensagem):
+        if not self.winfo_exists():
+            return
+        if threading.current_thread() is threading.main_thread():
+            self._append_log(mensagem)
+        else:
+            self.after(0, self._append_log, mensagem)
+
+    def _append_log(self, mensagem):
+        if not self.winfo_exists():
+            return
         self.txt_log.insert("end", f"> {mensagem}\n")
         self.txt_log.see("end")
 
@@ -218,45 +244,83 @@ class AppSalus(ctk.CTk):
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
 
-        # Lista apenas arquivos PDF
-        arquivos = [f for f in os.listdir(self.pasta_origem) if f.lower().endswith('.pdf')]
+        try:
+            # Lista apenas arquivos PDF
+            arquivos = sorted(
+                entry.name
+                for entry in os.scandir(self.pasta_origem)
+                if entry.is_file() and entry.name.lower().endswith(".pdf")
+            )
+        except Exception as exc:
+            self.log(f"Erro ao listar arquivos: {exc}")
+            self.after(0, self._finalizar_lote, 0, True, f"{exc}")
+            return
         total = len(arquivos)
         
         if total == 0:
             self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
-            self.reset_botoes()
+            self.after(0, self.reset_botoes)
             return
 
         self.log(f"Total de arquivos na fila: {total}")
         
-        for i, arquivo in enumerate(arquivos):
-            if self.stop_event.is_set(): break
+        erro_inesperado = None
+        for index, arquivo in enumerate(arquivos, start=1):
+            if self.stop_event.is_set():
+                break
             
             # Atualiza Progresso Visual
-            progresso = (i) / total
-            self.progress.set(progresso)
-            self.lbl_status_progresso.configure(text=f"Processando arquivo {i+1} de {total}: {arquivo}")
+            progresso = index / total
+            self.after(
+                0,
+                self._atualizar_progresso,
+                progresso,
+                f"Processando arquivo {index} de {total}: {arquivo}",
+            )
             
             caminho_completo = os.path.join(self.pasta_origem, arquivo)
             id_paciente = "".join(filter(str.isdigit, arquivo))
             
             # --- CHAMA O ROBÔ ---
-            sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
+            try:
+                sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
+            except Exception as exc:
+                sucesso, msg = False, f"Erro inesperado: {exc}"
+                erro_inesperado = msg
             
             if sucesso:
-                self.log(f"✅ {arquivo}: Sucesso! Movendo para concluídos...")
+                acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
+                self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
                 try:
-                    shutil.move(caminho_completo, os.path.join(self.pasta_destino, arquivo))
+                    destino = os.path.join(self.pasta_destino, arquivo)
+                    if self.copiar_arquivos.get():
+                        shutil.copy2(caminho_completo, destino)
+                    else:
+                        shutil.move(caminho_completo, destino)
                 except Exception as e:
-                    self.log(f"⚠️ Erro ao mover arquivo: {e}")
+                    self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
             else:
                 self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
 
+        interrompido = self.stop_event.is_set() or erro_inesperado is not None
+        self.after(0, self._finalizar_lote, total, interrompido, erro_inesperado)
+
+    def _atualizar_progresso(self, progresso, texto):
+        self.progress.set(progresso)
+        self.lbl_status_progresso.configure(text=texto)
+
+    def _finalizar_lote(self, total, interrompido, erro_inesperado=None):
         self.progress.set(1)
-        self.lbl_status_progresso.configure(text="Lote finalizado.")
+        status_texto = "Operação interrompida." if interrompido else "Lote finalizado."
+        self.lbl_status_progresso.configure(text=status_texto)
         self.log("--- FIM DO PROCESSAMENTO ---")
-        messagebox.showinfo("Relatório", f"Processamento finalizado.\nTotal processado: {total}")
-        
+        if erro_inesperado:
+            messagebox.showerror("Relatório", f"Processamento interrompido por erro.\n{erro_inesperado}")
+        elif interrompido:
+            messagebox.showwarning("Relatório", "Processamento interrompido pelo usuário.")
+        else:
+            messagebox.showinfo("Relatório", f"Processamento finalizado.\nTotal processado: {total}")
+
         self.reset_botoes()
 
     def reset_botoes(self):

@@ -8,15 +8,16 @@ import pygetwindow as gw
 import pyperclip
 
 class SalusRobot:
-    def __init__(self, logger_func, stop_event, simulacao=False):
+    def __init__(self, logger_func, stop_event, sistema, simulacao=False):
         self.log = logger_func
         self.stop_event = stop_event
         self.simulacao = simulacao
+        self.sistema = sistema
         
         if getattr(sys, 'frozen', False):
-            self.caminho_mapa = os.path.join(sys._MEIPASS, "imgs", "mapa.png")
+            self.base_path = os.path.join(sys._MEIPASS, "imgs")
         else:
-            self.caminho_mapa = os.path.join("imgs", "mapa.png")
+            self.base_path = os.path.join("imgs")
 
         self.mapa_img = None
         self._posicoes_cache = {}
@@ -43,9 +44,23 @@ class SalusRobot:
             "passo_07", "passo_08", "passo_09", "passo_11", "passo_12"
         ]
 
+    def _resolver_caminho_mapa(self):
+        caminho_especifico = os.path.join(self.base_path, f"mapa_{self.sistema}.png")
+        caminho_padrao = os.path.join(self.base_path, "mapa.png")
+
+        if os.path.exists(caminho_especifico):
+            return caminho_especifico
+
+        if os.path.exists(caminho_padrao):
+            self.log(f"Aviso: mapa_{self.sistema}.png não encontrado. Usando mapa.png padrão.")
+            return caminho_padrao
+
+        return caminho_especifico
+
     def _carregar_mapa(self):
+        self.caminho_mapa = self._resolver_caminho_mapa()
         if not os.path.exists(self.caminho_mapa):
-            self.log("Erro: mapa.png não encontrado")
+            self.log(f"Erro: mapa não encontrado em {self.caminho_mapa}")
             self.mapa_img = None
             return
 
@@ -58,8 +73,9 @@ class SalusRobot:
             return None
 
         cor_key = tuple(cor_bgr)
-        if cor_key in self._posicoes_cache:
-            return self._posicoes_cache[cor_key]
+        cache_sistema = self._posicoes_cache.setdefault(self.sistema, {})
+        if cor_key in cache_sistema:
+            return cache_sistema[cor_key]
 
         cor_np = np.array(cor_key, dtype="uint8")
         mask = cv2.inRange(self.mapa_img, cor_np, cor_np)
@@ -67,9 +83,9 @@ class SalusRobot:
 
         if pontos is not None:
             pos = pontos[0][0]
-            self._posicoes_cache[cor_key] = pos
+            cache_sistema[cor_key] = pos
             return pos
-        self._posicoes_cache[cor_key] = None
+        cache_sistema[cor_key] = None
         return None
 
     def executar_acao(self, x, y, tipo, valor=None):
@@ -129,3 +145,9 @@ class SalusRobot:
                 self.log(f"Aviso: Cor do passo {nome_passo} não encontrada")
         
         return True, "Sucesso"
+
+    def janela_disponivel(self, titulo="Pedido de Exames (Remoto)"):
+        try:
+            return bool(gw.getWindowsWithTitle(titulo))
+        except Exception:
+            return False

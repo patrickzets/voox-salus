@@ -1,9 +1,10 @@
 import customtkinter as ctk
 import threading
-import os
-import shutil  # Biblioteca para mover arquivos
+import time
+import queue
 from tkinter import filedialog, messagebox
 from robo import SalusRobot
+from processamento import LoteConfig, processar_lote
 
 # --- CONFIGURAÇÃO DE TEMA PROFISSIONAL (Light Mode Clean) ---
 ctk.set_appearance_mode("Light")
@@ -26,6 +27,7 @@ class AppSalus(ctk.CTk):
         self.geometry(f"+{x}+{y}")
         
         self.stop_event = threading.Event()
+        self.event_queue = queue.Queue()
         
         # Variáveis de Controle
         self.pasta_origem = ""
@@ -34,6 +36,7 @@ class AppSalus(ctk.CTk):
         self.copiar_arquivos = ctk.BooleanVar(value=False)
         
         self.setup_ui()
+        self.after(150, self.processar_eventos)
 
     def setup_ui(self):
         # --- CABEÇALHO ---
@@ -187,10 +190,53 @@ class AppSalus(ctk.CTk):
         btn.pack(side="right")
 
     def log(self, mensagem):
-        if threading.current_thread() is threading.main_thread():
+        self.event_queue.put({"tipo": "log", "mensagem": mensagem})
+
+    def enfileirar_progresso(self, progresso, texto):
+        self.event_queue.put({"tipo": "progresso", "progresso": progresso, "texto": texto})
+
+    def processar_eventos(self):
+        logs = []
+        progresso = None
+        texto_progresso = None
+        finalizar = None
+        reset = False
+
+        while True:
+            try:
+                evento = self.event_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            tipo = evento.get("tipo")
+            if tipo == "log":
+                logs.append(evento.get("mensagem", ""))
+            elif tipo == "progresso":
+                progresso = evento.get("progresso")
+                texto_progresso = evento.get("texto")
+            elif tipo == "finalizar":
+                finalizar = (
+                    evento.get("total", 0),
+                    evento.get("interrompido", False),
+                    evento.get("duracao_lote", 0.0),
+                    evento.get("processados", 0),
+                )
+            elif tipo == "reset":
+                reset = True
+
+        for mensagem in logs:
             self._append_log(mensagem)
-        else:
-            self.after(0, self._append_log, mensagem)
+
+        if progresso is not None:
+            self._atualizar_progresso(progresso, texto_progresso)
+
+        if finalizar:
+            total, interrompido, duracao_lote, processados = finalizar
+            self._finalizar_lote(total, interrompido, duracao_lote, processados)
+        elif reset:
+            self.reset_botoes()
+
+        self.after(150, self.processar_eventos)
 
     def _append_log(self, mensagem):
         self.txt_log.insert("end", f"> {mensagem}\n")
@@ -233,77 +279,74 @@ class AppSalus(ctk.CTk):
         self.log("🛑 Solicitando parada segura...")
 
     def rodar_lote(self):
-        bot = SalusRobot(self.log, self.stop_event)
         sistema = self.sistema_selecionado.get()
-        
+        inicio_lote = time.perf_counter()
+        bot = SalusRobot(self.log, self.stop_event, sistema)
+
         self.log(f"--- INICIANDO LOTE ({sistema}) ---")
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
 
-        # Lista apenas arquivos PDF
-        arquivos = sorted(
-            entry.name
-            for entry in os.scandir(self.pasta_origem)
-            if entry.is_file() and entry.name.lower().endswith(".pdf")
-        )
-        total = len(arquivos)
-        
-        if total == 0:
-            self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
+        if bot.mapa_img is None:
+            self.log("Erro: mapa.png não foi carregado. Verifique o arquivo antes de iniciar o lote.")
             self.after(0, self.reset_botoes)
             return
 
-        self.log(f"Total de arquivos na fila: {total}")
-        
-        for index, arquivo in enumerate(arquivos, start=1):
-            if self.stop_event.is_set():
-                break
-            
-            # Atualiza Progresso Visual
-            progresso = index / total
-            self.after(
-                0,
-                self._atualizar_progresso,
-                progresso,
-                f"Processando arquivo {index} de {total}: {arquivo}",
-            )
-            
-            caminho_completo = os.path.join(self.pasta_origem, arquivo)
-            id_paciente = "".join(filter(str.isdigit, arquivo))
-            
-            # --- CHAMA O ROBÔ ---
-            try:
-                sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
-            except Exception as exc:
-                sucesso, msg = False, f"Erro inesperado: {exc}"
-                erro_inesperado = msg
-            
-            if sucesso:
-                acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
-                self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
-                try:
-                    destino = os.path.join(self.pasta_destino, arquivo)
-                    if self.copiar_arquivos.get():
-                        shutil.copy2(caminho_completo, destino)
-                    else:
-                        shutil.move(caminho_completo, destino)
-                except Exception as e:
-                    self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
-            else:
-                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
+        if not bot.janela_disponivel():
+            self.log("Erro: janela alvo 'Pedido de Exames (Remoto)' não encontrada.")
+            self.after(0, self.reset_botoes)
+            return
 
-        interrompido = self.stop_event.is_set()
-        self.after(0, self._finalizar_lote, total, interrompido)
+        processados = 0
+
+        def on_progress(progresso, texto):
+            self.enfileirar_progresso(progresso, texto)
+
+        def on_finish(total, interrompido):
+            nonlocal processados
+            if interrompido:
+                processados = int(total * self.progress.get())
+            else:
+                processados = total
+            duracao_lote = time.perf_counter() - inicio_lote
+            self.event_queue.put(
+                {
+                    "tipo": "finalizar",
+                    "total": total,
+                    "interrompido": interrompido,
+                    "duracao_lote": duracao_lote,
+                    "processados": processados,
+                }
+            )
+
+        config = LoteConfig(
+            origem=self.pasta_origem,
+            destino=self.pasta_destino,
+            sistema=sistema,
+            copiar=self.copiar_arquivos.get(),
+            on_progress=on_progress,
+            on_finish=on_finish,
+        )
+
+        processar_lote(config, self.log, self.stop_event)
 
     def _atualizar_progresso(self, progresso, texto):
         self.progress.set(progresso)
         self.lbl_status_progresso.configure(text=texto)
 
-    def _finalizar_lote(self, total, interrompido):
+    def _finalizar_lote(self, total, interrompido, duracao_lote, processados):
         self.progress.set(1)
         status_texto = "Operação interrompida." if interrompido else "Lote finalizado."
         self.lbl_status_progresso.configure(text=status_texto)
         self.log("--- FIM DO PROCESSAMENTO ---")
+        if processados:
+            tempo_medio = duracao_lote / processados
+            self.log(
+                f"Tempo total do lote: {duracao_lote:.2f}s | "
+                f"Tempo médio por arquivo: {tempo_medio:.2f}s (processados: {processados})."
+            )
+        else:
+            self.log(f"Tempo total do lote: {duracao_lote:.2f}s | Nenhum arquivo processado.")
         if interrompido:
             messagebox.showwarning("Relatório", "Processamento interrompido pelo usuário.")
         else:

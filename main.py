@@ -235,7 +235,6 @@ class AppSalus(ctk.CTk):
         self.log("🛑 Solicitando parada segura...")
 
     def rodar_lote(self):
-        bot = SalusRobot(self.log, self.stop_event)
         sistema = self.sistema_selecionado.get()
         inicio_lote = time.perf_counter()
         

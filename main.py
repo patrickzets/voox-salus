@@ -1,9 +1,7 @@
 import customtkinter as ctk
 import threading
-import os
-import shutil  # Biblioteca para mover arquivos
 from tkinter import filedialog, messagebox
-from robo import SalusRobot
+from processamento import LoteConfig, processar_lote
 
 # --- CONFIGURAÇÃO DE TEMA PROFISSIONAL (Light Mode Clean) ---
 ctk.set_appearance_mode("Light")
@@ -233,67 +231,25 @@ class AppSalus(ctk.CTk):
         self.log("🛑 Solicitando parada segura...")
 
     def rodar_lote(self):
-        bot = SalusRobot(self.log, self.stop_event)
-        sistema = self.sistema_selecionado.get()
-        
-        self.log(f"--- INICIANDO LOTE ({sistema}) ---")
-        self.log(f"Origem: {self.pasta_origem}")
-        self.log(f"Destino: {self.pasta_destino}")
-
-        # Lista apenas arquivos PDF
-        arquivos = sorted(
-            entry.name
-            for entry in os.scandir(self.pasta_origem)
-            if entry.is_file() and entry.name.lower().endswith(".pdf")
-        )
-        total = len(arquivos)
-        
-        if total == 0:
-            self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
-            self.after(0, self.reset_botoes)
-            return
-
-        self.log(f"Total de arquivos na fila: {total}")
-        
-        for index, arquivo in enumerate(arquivos, start=1):
-            if self.stop_event.is_set():
-                break
-            
-            # Atualiza Progresso Visual
-            progresso = index / total
-            self.after(
+        config = LoteConfig(
+            origem=self.pasta_origem,
+            destino=self.pasta_destino,
+            sistema=self.sistema_selecionado.get(),
+            copiar=self.copiar_arquivos.get(),
+            on_progress=lambda progresso, texto: self.after(
                 0,
                 self._atualizar_progresso,
                 progresso,
-                f"Processando arquivo {index} de {total}: {arquivo}",
-            )
-            
-            caminho_completo = os.path.join(self.pasta_origem, arquivo)
-            id_paciente = "".join(filter(str.isdigit, arquivo))
-            
-            # --- CHAMA O ROBÔ ---
-            try:
-                sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
-            except Exception as exc:
-                sucesso, msg = False, f"Erro inesperado: {exc}"
-                erro_inesperado = msg
-            
-            if sucesso:
-                acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
-                self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
-                try:
-                    destino = os.path.join(self.pasta_destino, arquivo)
-                    if self.copiar_arquivos.get():
-                        shutil.copy2(caminho_completo, destino)
-                    else:
-                        shutil.move(caminho_completo, destino)
-                except Exception as e:
-                    self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
-            else:
-                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
-
-        interrompido = self.stop_event.is_set()
-        self.after(0, self._finalizar_lote, total, interrompido)
+                texto,
+            ),
+            on_finish=lambda total, interrompido: self.after(
+                0,
+                self._finalizar_lote,
+                total,
+                interrompido,
+            ),
+        )
+        processar_lote(config, self.log, self.stop_event)
 
     def _atualizar_progresso(self, progresso, texto):
         self.progress.set(progresso)

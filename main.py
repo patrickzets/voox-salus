@@ -1,11 +1,10 @@
 import customtkinter as ctk
 import threading
-import os
-import shutil  # Biblioteca para mover arquivos
 import time
+import queue
 from tkinter import filedialog, messagebox
 from robo import SalusRobot
-from config import LIMITE_TEMPO_SEQUENCIA_SEGUNDOS
+from processamento import LoteConfig, processar_lote
 
 # --- CONFIGURAÇÃO DE TEMA PROFISSIONAL (Light Mode Clean) ---
 ctk.set_appearance_mode("Light")
@@ -216,7 +215,12 @@ class AppSalus(ctk.CTk):
                 progresso = evento.get("progresso")
                 texto_progresso = evento.get("texto")
             elif tipo == "finalizar":
-                finalizar = (evento.get("total", 0), evento.get("interrompido", False))
+                finalizar = (
+                    evento.get("total", 0),
+                    evento.get("interrompido", False),
+                    evento.get("duracao_lote", 0.0),
+                    evento.get("processados", 0),
+                )
             elif tipo == "reset":
                 reset = True
 
@@ -227,8 +231,8 @@ class AppSalus(ctk.CTk):
             self._atualizar_progresso(progresso, texto_progresso)
 
         if finalizar:
-            total, interrompido = finalizar
-            self._finalizar_lote(total, interrompido)
+            total, interrompido, duracao_lote, processados = finalizar
+            self._finalizar_lote(total, interrompido, duracao_lote, processados)
         elif reset:
             self.reset_botoes()
 
@@ -277,7 +281,8 @@ class AppSalus(ctk.CTk):
     def rodar_lote(self):
         sistema = self.sistema_selecionado.get()
         inicio_lote = time.perf_counter()
-        
+        bot = SalusRobot(self.log, self.stop_event, sistema)
+
         self.log(f"--- INICIANDO LOTE ({sistema}) ---")
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
@@ -292,81 +297,38 @@ class AppSalus(ctk.CTk):
             self.after(0, self.reset_botoes)
             return
 
-        # Lista apenas arquivos PDF
-        arquivos = sorted(
-            entry.name
-            for entry in os.scandir(self.pasta_origem)
-            if entry.is_file() and entry.name.lower().endswith(".pdf")
-        )
-        total = len(arquivos)
-        sucessos = []
-        falhas = 0
-        
-        if total == 0:
-            self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
-            self.event_queue.put({"tipo": "reset"})
-            return
-
-        self.log(f"Total de arquivos na fila: {total}")
         processados = 0
-        
-        for index, arquivo in enumerate(arquivos, start=1):
-            if self.stop_event.is_set():
-                break
-            
-            # Atualiza Progresso Visual
-            progresso = index / total
-            self.enfileirar_progresso(
-                progresso,
-                f"Processando arquivo {index} de {total}: {arquivo}",
+
+        def on_progress(progresso, texto):
+            self.enfileirar_progresso(progresso, texto)
+
+        def on_finish(total, interrompido):
+            nonlocal processados
+            if interrompido:
+                processados = int(total * self.progress.get())
+            else:
+                processados = total
+            duracao_lote = time.perf_counter() - inicio_lote
+            self.event_queue.put(
+                {
+                    "tipo": "finalizar",
+                    "total": total,
+                    "interrompido": interrompido,
+                    "duracao_lote": duracao_lote,
+                    "processados": processados,
+                }
             )
-            
-            caminho_completo = os.path.join(self.pasta_origem, arquivo)
-            id_paciente = "".join(filter(str.isdigit, arquivo))
-            
-            # --- CHAMA O ROBÔ ---
-            try:
-                inicio_sequencia = time.perf_counter()
-                sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
-                duracao_sequencia = time.perf_counter() - inicio_sequencia
-                if duracao_sequencia > LIMITE_TEMPO_SEQUENCIA_SEGUNDOS:
-                    self.log(
-                        "⏱️ executar_sequencia acima do limite "
-                        f"({duracao_sequencia:.2f}s > {LIMITE_TEMPO_SEQUENCIA_SEGUNDOS:.2f}s) "
-                        f"no arquivo {arquivo}."
-                    )
-            except Exception as exc:
-                sucesso, msg = False, f"Erro inesperado: {exc}"
-                erro_inesperado = msg
-            
-            if sucesso:
-                self.log(f"✅ {arquivo}: Sucesso! Marcado para finalizar ao final do lote.")
-                sucessos.append(arquivo)
-            else:
-                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
-                falhas += 1
 
-        erros_movimentacao = 0
-        if sucessos:
-            acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
-            self.log(f"{acao_texto} arquivos finalizados em lote...")
-            for arquivo in sucessos:
-                caminho_completo = os.path.join(self.pasta_origem, arquivo)
-                destino = os.path.join(self.pasta_destino, arquivo)
-                try:
-                    if self.copiar_arquivos.get():
-                        shutil.copy2(caminho_completo, destino)
-                    else:
-                        shutil.move(caminho_completo, destino)
-                except Exception as e:
-                    self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
-            else:
-                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
-            processados += 1
+        config = LoteConfig(
+            origem=self.pasta_origem,
+            destino=self.pasta_destino,
+            sistema=sistema,
+            copiar=self.copiar_arquivos.get(),
+            on_progress=on_progress,
+            on_finish=on_finish,
+        )
 
-        interrompido = self.stop_event.is_set()
-        duracao_lote = time.perf_counter() - inicio_lote
-        self.after(0, self._finalizar_lote, total, interrompido, duracao_lote, processados)
+        processar_lote(config, self.log, self.stop_event)
 
     def _atualizar_progresso(self, progresso, texto):
         self.progress.set(progresso)

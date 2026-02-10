@@ -2,9 +2,10 @@ import customtkinter as ctk
 import threading
 import os
 import shutil  # Biblioteca para mover arquivos
-import queue
+import time
 from tkinter import filedialog, messagebox
 from robo import SalusRobot
+from config import LIMITE_TEMPO_SEQUENCIA_SEGUNDOS
 
 # --- CONFIGURAÇÃO DE TEMA PROFISSIONAL (Light Mode Clean) ---
 ctk.set_appearance_mode("Light")
@@ -274,12 +275,22 @@ class AppSalus(ctk.CTk):
         self.log("🛑 Solicitando parada segura...")
 
     def rodar_lote(self):
-        bot = SalusRobot(self.log, self.stop_event)
         sistema = self.sistema_selecionado.get()
+        inicio_lote = time.perf_counter()
         
         self.log(f"--- INICIANDO LOTE ({sistema}) ---")
         self.log(f"Origem: {self.pasta_origem}")
         self.log(f"Destino: {self.pasta_destino}")
+
+        if bot.mapa_img is None:
+            self.log("Erro: mapa.png não foi carregado. Verifique o arquivo antes de iniciar o lote.")
+            self.after(0, self.reset_botoes)
+            return
+
+        if not bot.janela_disponivel():
+            self.log("Erro: janela alvo 'Pedido de Exames (Remoto)' não encontrada.")
+            self.after(0, self.reset_botoes)
+            return
 
         # Lista apenas arquivos PDF
         arquivos = sorted(
@@ -288,6 +299,8 @@ class AppSalus(ctk.CTk):
             if entry.is_file() and entry.name.lower().endswith(".pdf")
         )
         total = len(arquivos)
+        sucessos = []
+        falhas = 0
         
         if total == 0:
             self.log("Nenhum arquivo PDF encontrado na pasta de origem.")
@@ -295,6 +308,7 @@ class AppSalus(ctk.CTk):
             return
 
         self.log(f"Total de arquivos na fila: {total}")
+        processados = 0
         
         for index, arquivo in enumerate(arquivos, start=1):
             if self.stop_event.is_set():
@@ -312,16 +326,34 @@ class AppSalus(ctk.CTk):
             
             # --- CHAMA O ROBÔ ---
             try:
+                inicio_sequencia = time.perf_counter()
                 sucesso, msg = bot.executar_sequencia(id_paciente, caminho_completo, sistema)
+                duracao_sequencia = time.perf_counter() - inicio_sequencia
+                if duracao_sequencia > LIMITE_TEMPO_SEQUENCIA_SEGUNDOS:
+                    self.log(
+                        "⏱️ executar_sequencia acima do limite "
+                        f"({duracao_sequencia:.2f}s > {LIMITE_TEMPO_SEQUENCIA_SEGUNDOS:.2f}s) "
+                        f"no arquivo {arquivo}."
+                    )
             except Exception as exc:
                 sucesso, msg = False, f"Erro inesperado: {exc}"
                 erro_inesperado = msg
             
             if sucesso:
-                acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
-                self.log(f"✅ {arquivo}: Sucesso! {acao_texto} para concluídos...")
+                self.log(f"✅ {arquivo}: Sucesso! Marcado para finalizar ao final do lote.")
+                sucessos.append(arquivo)
+            else:
+                self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
+                falhas += 1
+
+        erros_movimentacao = 0
+        if sucessos:
+            acao_texto = "Copiando" if self.copiar_arquivos.get() else "Movendo"
+            self.log(f"{acao_texto} arquivos finalizados em lote...")
+            for arquivo in sucessos:
+                caminho_completo = os.path.join(self.pasta_origem, arquivo)
+                destino = os.path.join(self.pasta_destino, arquivo)
                 try:
-                    destino = os.path.join(self.pasta_destino, arquivo)
                     if self.copiar_arquivos.get():
                         shutil.copy2(caminho_completo, destino)
                     else:
@@ -330,19 +362,29 @@ class AppSalus(ctk.CTk):
                     self.log(f"⚠️ Erro ao finalizar arquivo: {e}")
             else:
                 self.log(f"❌ {arquivo}: Falhou ({msg}). Mantendo na origem.")
+            processados += 1
 
         interrompido = self.stop_event.is_set()
-        self.event_queue.put({"tipo": "finalizar", "total": total, "interrompido": interrompido})
+        duracao_lote = time.perf_counter() - inicio_lote
+        self.after(0, self._finalizar_lote, total, interrompido, duracao_lote, processados)
 
     def _atualizar_progresso(self, progresso, texto):
         self.progress.set(progresso)
         self.lbl_status_progresso.configure(text=texto)
 
-    def _finalizar_lote(self, total, interrompido):
+    def _finalizar_lote(self, total, interrompido, duracao_lote, processados):
         self.progress.set(1)
         status_texto = "Operação interrompida." if interrompido else "Lote finalizado."
         self.lbl_status_progresso.configure(text=status_texto)
         self.log("--- FIM DO PROCESSAMENTO ---")
+        if processados:
+            tempo_medio = duracao_lote / processados
+            self.log(
+                f"Tempo total do lote: {duracao_lote:.2f}s | "
+                f"Tempo médio por arquivo: {tempo_medio:.2f}s (processados: {processados})."
+            )
+        else:
+            self.log(f"Tempo total do lote: {duracao_lote:.2f}s | Nenhum arquivo processado.")
         if interrompido:
             messagebox.showwarning("Relatório", "Processamento interrompido pelo usuário.")
         else:

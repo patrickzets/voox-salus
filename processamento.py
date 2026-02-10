@@ -17,7 +17,7 @@ class LoteConfig:
 
 
 def processar_lote(config: LoteConfig, logger: Callable[[str], None], stop_event) -> Tuple[int, bool]:
-    bot = SalusRobot(logger, stop_event)
+    bot = SalusRobot(logger, stop_event, config.sistema)
 
     logger(f"--- INICIANDO LOTE ({config.sistema}) ---")
     logger(f"Origem: {config.origem}")

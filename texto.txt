@@ -1,17 +1,18 @@
-{
-  "1": {
-    "nome": "Patrick ADM",
-    "login_url": "https://biocroma.neovita.net.br/login",
-    "email": "SEU_EMAIL_AQUI",
-    "senha": "SUA_SENHA_AQUI"
-  },
-  "2": {
-    "nome": "Parceiro",
-    "login_url": "https://biocroma.neovita.net.br/login",
-    "email": "EMAIL_DO_PARCEIRO",
-    "senha": "SENHA_DO_PARCEIRO"
-  }
-}
+USUARIOS_JSON = os.path.join(BASE_DIR, "usuarios.json")
+ARQUIVO_XLSX = os.path.join(BASE_DIR, "controle.xlsx")
+
+import os
+import sys
+
+# Pasta onde está o script .py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Garante que o programa sempre "trabalhe" nessa pasta
+os.chdir(BASE_DIR)
+
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+
+
 
 
 

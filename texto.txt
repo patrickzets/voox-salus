@@ -1,1 +1,14 @@
-pip install -U selenium
+{
+  "1": {
+    "nome": "Patrick ADM",
+    "login_url": "https://biocroma.neovita.net.br/login",
+    "email": "SEU_EMAIL_AQUI",
+    "senha": "SUA_SENHA_AQUI"
+  },
+  "2": {
+    "nome": "Parceiro",
+    "login_url": "https://biocroma.neovita.net.br/login",
+    "email": "EMAIL_DO_PARCEIRO",
+    "senha": "SENHA_DO_PARCEIRO"
+  }
+}
